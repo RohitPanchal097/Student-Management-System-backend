@@ -13,7 +13,7 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 DB_PATH = os.path.join(os.path.dirname(__file__), 'student_mgmt.db')
 
 # --- Database Setup ---
@@ -238,7 +238,7 @@ def get_students():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''SELECT s.id, s.name, s.father_name, s.dob, s.mobile, s.email, s.gender, s.admission_date, s.year, s.semester,
-                        s.course_id, s.batch_id, c.name as course_name, b.name as batch_name
+                        s.course_id, s.batch_id, s.fees_total, c.name as course_name, b.name as batch_name
                  FROM students s
                  LEFT JOIN courses c ON s.course_id = c.id
                  LEFT JOIN batches b ON s.batch_id = b.id
@@ -257,8 +257,9 @@ def get_students():
             'semester': row[9],
             'course_id': row[10],
             'batch_id': row[11],
-            'course': row[12],
-            'batch': row[13],
+            'fees_total': row[12],
+            'course': row[13],
+            'batch': row[14],
         }
         for row in c.fetchall()
     ]
@@ -268,13 +269,13 @@ def get_students():
 @app.route('/api/students/<int:student_id>', methods=['PUT'])
 def update_student(student_id):
     data = request.json
-    required = ['name', 'father_name', 'dob', 'mobile', 'email', 'gender', 'admission_date', 'year', 'semester', 'course_id', 'batch_id']
+    required = ['name', 'father_name', 'dob', 'mobile', 'email', 'gender', 'admission_date', 'year', 'semester', 'course_id', 'batch_id', 'fees_total']
     if not all(k in data and data[k] for k in required):
         return jsonify({'error': 'Missing required fields'}), 400
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''UPDATE students SET name=?, father_name=?, dob=?, mobile=?, email=?, gender=?, admission_date=?, year=?, semester=?, course_id=?, batch_id=? WHERE id=?''',
-              (data['name'], data['father_name'], data['dob'], data['mobile'], data['email'], data['gender'], data['admission_date'], data['year'], data['semester'], data['course_id'], data['batch_id'], student_id))
+    c.execute('''UPDATE students SET name=?, father_name=?, dob=?, mobile=?, email=?, gender=?, admission_date=?, year=?, semester=?, course_id=?, batch_id=?, fees_total=? WHERE id=?''',
+              (data['name'], data['father_name'], data['dob'], data['mobile'], data['email'], data['gender'], data['admission_date'], data['year'], data['semester'], data['course_id'], data['batch_id'], data['fees_total'], student_id))
     conn.commit()
     conn.close()
     return jsonify({'success': True})
@@ -595,9 +596,9 @@ def add_fees_payment(student_id):
 def fees_history(student_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT amount, mode, date, note FROM fees_payments WHERE student_id = ? ORDER BY date DESC, id DESC', (student_id,))
+    c.execute('SELECT id, amount, mode, date, note FROM fees_payments WHERE student_id = ? ORDER BY date DESC, id DESC', (student_id,))
     history = [
-        {'amount': row[0], 'mode': row[1], 'date': row[2], 'note': row[3]} for row in c.fetchall()
+        {'id': row[0], 'amount': row[1], 'mode': row[2], 'date': row[3], 'note': row[4]} for row in c.fetchall()
     ]
     conn.close()
     return jsonify(history)
@@ -628,8 +629,10 @@ def fees_collection_summary():
     conn.close()
     return jsonify(summary)
 
-@app.route('/api/fees_payments/<int:payment_id>', methods=['DELETE'])
+@app.route('/api/fees_payments/<int:payment_id>', methods=['DELETE', 'OPTIONS'])
 def delete_fees_payment(payment_id):
+    if request.method == 'OPTIONS':
+        return '', 200
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('DELETE FROM fees_payments WHERE id=?', (payment_id,))
