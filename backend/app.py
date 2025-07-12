@@ -628,5 +628,72 @@ def fees_collection_summary():
     conn.close()
     return jsonify(summary)
 
+@app.route('/api/fees_payments/<int:payment_id>', methods=['DELETE'])
+def delete_fees_payment(payment_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('DELETE FROM fees_payments WHERE id=?', (payment_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+@app.route('/api/fees_payments', methods=['GET'])
+def get_fees_payments():
+    from_date = request.args.get('from')
+    to_date = request.args.get('to')
+    course_id = request.args.get('course_id')
+    batch_id = request.args.get('batch_id')
+    year = request.args.get('year')
+    semester = request.args.get('semester')
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    query = '''SELECT fp.id, fp.student_id, s.name, s.course_id, c.name, s.batch_id, b.name, s.year, s.semester, fp.amount, fp.mode, fp.date, fp.note
+               FROM fees_payments fp
+               JOIN students s ON fp.student_id = s.id
+               LEFT JOIN courses c ON s.course_id = c.id
+               LEFT JOIN batches b ON s.batch_id = b.id
+               WHERE 1=1'''
+    params = []
+    if from_date:
+        query += ' AND fp.date >= ?'
+        params.append(from_date)
+    if to_date:
+        query += ' AND fp.date <= ?'
+        params.append(to_date)
+    if course_id:
+        query += ' AND s.course_id = ?'
+        params.append(course_id)
+    if batch_id:
+        query += ' AND s.batch_id = ?'
+        params.append(batch_id)
+    if year:
+        query += ' AND s.year = ?'
+        params.append(year)
+    if semester:
+        query += ' AND s.semester = ?'
+        params.append(semester)
+    query += ' ORDER BY fp.date DESC, fp.id DESC'
+    c.execute(query, params)
+    payments = [
+        {
+            'id': row[0],
+            'student_id': row[1],
+            'student_name': row[2],
+            'course_id': row[3],
+            'course': row[4],
+            'batch_id': row[5],
+            'batch': row[6],
+            'year': row[7],
+            'semester': row[8],
+            'amount': row[9],
+            'mode': row[10],
+            'date': row[11],
+            'note': row[12],
+        }
+        for row in c.fetchall()
+    ]
+    conn.close()
+    return jsonify(payments)
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000) 
