@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'jpeg', 'png'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+import csv
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
@@ -697,6 +698,77 @@ def get_fees_payments():
     ]
     conn.close()
     return jsonify(payments)
+
+@app.route('/api/students/bulk_upload', methods=['POST'])
+def bulk_upload_students():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    if not file.filename.lower().endswith('.csv'):
+        return jsonify({'error': 'Only CSV files are supported'}), 400
+    # Read CSV
+    stream = file.stream.read().decode('utf-8')
+    reader = csv.DictReader(stream.splitlines())
+    required = ['name', 'father_name', 'dob', 'mobile', 'email', 'gender', 'admission_date', 'year', 'semester']
+    results = []
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    for i, row in enumerate(reader, 2):  # start at line 2 (after header)
+        # Validate required fields
+        if not all(row.get(k) for k in required):
+            results.append({'row': i, 'status': 'error', 'error': 'Missing required fields'})
+            continue
+        # Course ID lookup
+        course_id = row.get('course_id')
+        if not course_id:
+            course_name = row.get('course_name')
+            if course_name:
+                c.execute('SELECT id FROM courses WHERE name = ?', (course_name.strip(),))
+                course_row = c.fetchone()
+                if not course_row:
+                    results.append({'row': i, 'status': 'error', 'error': f'Course not found: {course_name}'})
+                    continue
+                course_id = course_row[0]
+            else:
+                results.append({'row': i, 'status': 'error', 'error': 'Missing course_id or course_name'})
+                continue
+        # Batch ID lookup
+        batch_id = row.get('batch_id')
+        if not batch_id:
+            batch_name = row.get('batch_name')
+            if batch_name:
+                # Try to use course_id if available
+                c.execute('SELECT id FROM batches WHERE name = ? AND course_id = ?', (batch_name.strip(), course_id))
+                batch_row = c.fetchone()
+                if not batch_row:
+                    # Try without course_id (fallback)
+                    c.execute('SELECT id FROM batches WHERE name = ?', (batch_name.strip(),))
+                    batch_row = c.fetchone()
+                if not batch_row:
+                    results.append({'row': i, 'status': 'error', 'error': f'Batch not found: {batch_name}'})
+                    continue
+                batch_id = batch_row[0]
+            else:
+                results.append({'row': i, 'status': 'error', 'error': 'Missing batch_id or batch_name'})
+                continue
+        try:
+            c.execute('''INSERT INTO students (name, father_name, dob, mobile, email, gender, admission_date, year, semester, course_id, batch_id, fees_total)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (
+                        row['name'], row['father_name'], row['dob'], row['mobile'], row['email'], row['gender'],
+                        row['admission_date'], row['year'], row['semester'], course_id, batch_id,
+                        float(row['fees_total']) if row.get('fees_total') else 0
+                      ))
+            results.append({'row': i, 'status': 'success'})
+        except Exception as e:
+            results.append({'row': i, 'status': 'error', 'error': str(e)})
+    conn.commit()
+    conn.close()
+    success_count = sum(1 for r in results if r['status'] == 'success')
+    error_count = sum(1 for r in results if r['status'] == 'error')
+    return jsonify({'success': True, 'total': len(results), 'success_count': success_count, 'error_count': error_count, 'details': results})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000) 
